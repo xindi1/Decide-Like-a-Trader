@@ -1,493 +1,226 @@
-\
-const STORAGE_KEY = 'decide-like-a-trader-v1';
-
-const defaultState = {
-  currentSetup: null,
-  decisions: [],
-  latestDecision: null
-};
-
-let state = loadState();
-
-const els = {
-  pills: [...document.querySelectorAll('.pill')],
-  panels: [...document.querySelectorAll('.panel')],
-  assetName: document.getElementById('assetName'),
-  decisionType: document.getElementById('decisionType'),
-  timeframe: document.getElementById('timeframe'),
-  convictionGoal: document.getElementById('convictionGoal'),
-  thesis: document.getElementById('thesis'),
-  trigger: document.getElementById('trigger'),
-  risk: document.getElementById('risk'),
-  entry: document.getElementById('entry'),
-  stop: document.getElementById('stop'),
-  target: document.getElementById('target'),
-  maxRisk: document.getElementById('maxRisk'),
-  saveSetupBtn: document.getElementById('saveSetupBtn'),
-  clearSetupBtn: document.getElementById('clearSetupBtn'),
-  scoreClarity: document.getElementById('scoreClarity'),
-  scoreTrigger: document.getElementById('scoreTrigger'),
-  scoreRisk: document.getElementById('scoreRisk'),
-  scoreExecution: document.getElementById('scoreExecution'),
-  scoreReward: document.getElementById('scoreReward'),
-  scoreEmotion: document.getElementById('scoreEmotion'),
-  scoreClarityValue: document.getElementById('scoreClarityValue'),
-  scoreTriggerValue: document.getElementById('scoreTriggerValue'),
-  scoreRiskValue: document.getElementById('scoreRiskValue'),
-  scoreExecutionValue: document.getElementById('scoreExecutionValue'),
-  scoreRewardValue: document.getElementById('scoreRewardValue'),
-  scoreEmotionValue: document.getElementById('scoreEmotionValue'),
-  computeBtn: document.getElementById('computeBtn'),
-  riskPerUnit: document.getElementById('riskPerUnit'),
-  rewardPerUnit: document.getElementById('rewardPerUnit'),
-  rMultiple: document.getElementById('rMultiple'),
-  positionSize: document.getElementById('positionSize'),
-  decisionOutput: document.getElementById('decisionOutput'),
-  executionPlan: document.getElementById('executionPlan'),
-  decisionNotes: document.getElementById('decisionNotes'),
-  saveDecisionBtn: document.getElementById('saveDecisionBtn'),
-  copyDecisionBtn: document.getElementById('copyDecisionBtn'),
-  journalSearch: document.getElementById('journalSearch'),
-  journalList: document.getElementById('journalList'),
-  exportBtn: document.getElementById('exportBtn'),
-  importFile: document.getElementById('importFile'),
-  demoBtn: document.getElementById('demoBtn'),
-  resetBtn: document.getElementById('resetBtn')
-};
-
-init();
-
-function init() {
-  bindEvents();
-  restoreInputs();
-  renderJournal();
-  renderLatestDecision();
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js').catch(console.error);
-  }
-}
-
-function bindEvents() {
-  els.pills.forEach(pill => pill.addEventListener('click', () => setView(pill.dataset.view)));
-  els.saveSetupBtn.addEventListener('click', saveSetup);
-  els.clearSetupBtn.addEventListener('click', clearSetup);
-  [els.scoreClarity, els.scoreTrigger, els.scoreRisk, els.scoreExecution, els.scoreReward, els.scoreEmotion]
-    .forEach(el => el.addEventListener('input', syncRangeValues));
-  els.computeBtn.addEventListener('click', computeDecision);
-  els.saveDecisionBtn.addEventListener('click', saveDecision);
-  els.copyDecisionBtn.addEventListener('click', copyLatest);
-  els.journalSearch.addEventListener('input', renderJournal);
-  els.exportBtn.addEventListener('click', exportData);
-  els.importFile.addEventListener('change', importData);
-  els.demoBtn.addEventListener('click', loadDemoData);
-  els.resetBtn.addEventListener('click', resetAll);
-  syncRangeValues();
-}
-
-function setView(viewName) {
-  els.pills.forEach(p => p.classList.toggle('active', p.dataset.view === viewName));
-  els.panels.forEach(panel => panel.classList.toggle('active', panel.id === `view-${viewName}`));
-}
-
-function syncRangeValues() {
-  els.scoreClarityValue.textContent = els.scoreClarity.value;
-  els.scoreTriggerValue.textContent = els.scoreTrigger.value;
-  els.scoreRiskValue.textContent = els.scoreRisk.value;
-  els.scoreExecutionValue.textContent = els.scoreExecution.value;
-  els.scoreRewardValue.textContent = els.scoreReward.value;
-  els.scoreEmotionValue.textContent = els.scoreEmotion.value;
-}
-
-function saveSetup() {
-  const asset = els.assetName.value.trim();
-  if (!asset) {
-    alert('Add a situation or asset first.');
-    return;
-  }
-
-  state.currentSetup = gatherSetup();
-  persist();
-  setView('score');
-}
-
-function gatherSetup() {
-  return {
-    assetName: els.assetName.value.trim(),
-    decisionType: els.decisionType.value,
-    timeframe: els.timeframe.value,
-    convictionGoal: els.convictionGoal.value,
-    thesis: els.thesis.value.trim(),
-    trigger: els.trigger.value.trim(),
-    risk: els.risk.value.trim(),
-    entry: parseFloat(els.entry.value) || 0,
-    stop: parseFloat(els.stop.value) || 0,
-    target: parseFloat(els.target.value) || 0,
-    maxRisk: parseFloat(els.maxRisk.value) || 0,
-    updatedAt: new Date().toISOString()
-  };
-}
-
-function clearSetup() {
-  els.assetName.value = '';
-  els.decisionType.value = 'Enter';
-  els.timeframe.value = 'Immediate';
-  els.convictionGoal.value = 'Moderate';
-  els.thesis.value = '';
-  els.trigger.value = '';
-  els.risk.value = '';
-  els.entry.value = '';
-  els.stop.value = '';
-  els.target.value = '';
-  els.maxRisk.value = '';
-  state.currentSetup = null;
-  state.latestDecision = null;
-  persist();
-  renderLatestDecision();
-}
-
-function computeDecision() {
-  const setup = gatherSetup();
-  if (!setup.assetName) {
-    alert('Add the setup first.');
-    return;
-  }
-
-  const scores = {
-    clarity: Number(els.scoreClarity.value),
-    trigger: Number(els.scoreTrigger.value),
-    risk: Number(els.scoreRisk.value),
-    execution: Number(els.scoreExecution.value),
-    reward: Number(els.scoreReward.value),
-    emotion: Number(els.scoreEmotion.value)
-  };
-
-  const totalScore = Object.values(scores).reduce((a, b) => a + b, 0);
-  const avgScore = totalScore / 6;
-
-  const riskPerUnit = setup.entry && setup.stop ? Math.abs(setup.entry - setup.stop) : 0;
-  const rewardPerUnit = setup.entry && setup.target ? Math.abs(setup.target - setup.entry) : 0;
-  const rMultiple = riskPerUnit > 0 ? rewardPerUnit / riskPerUnit : 0;
-  const positionSize = riskPerUnit > 0 && setup.maxRisk > 0 ? Math.floor(setup.maxRisk / riskPerUnit) : 0;
-
-  let call = 'PASS';
-  let rationale = 'The setup is not yet clear or executable enough.';
-  if (avgScore >= 4 && rMultiple >= 2 && scores.emotion >= 3 && scores.execution >= 3) {
-    call = 'ACT';
-    rationale = 'The setup is sufficiently clear, asymmetric, and executable.';
-  } else if (avgScore >= 3.2 && rMultiple >= 1.5) {
-    call = 'CAUTION';
-    rationale = 'There may be an opportunity, but some variables need tighter control.';
-  }
-
-  const summary = [
-    `Asset: ${setup.assetName}`,
-    `Decision Type: ${setup.decisionType}`,
-    `Timeframe: ${setup.timeframe}`,
-    `Call: ${call}`,
-    `Average Score: ${avgScore.toFixed(1)} / 5`,
-    riskPerUnit ? `Risk / Unit: ${riskPerUnit.toFixed(2)}` : 'Risk / Unit: —',
-    rewardPerUnit ? `Reward / Unit: ${rewardPerUnit.toFixed(2)}` : 'Reward / Unit: —',
-    rMultiple ? `R Multiple: ${rMultiple.toFixed(2)}` : 'R Multiple: —',
-    positionSize ? `Size: ${positionSize}` : 'Size: —',
-    '',
-    `Rationale: ${rationale}`
-  ].join('\n');
-
-  state.currentSetup = setup;
-  state.latestDecision = {
-    id: crypto.randomUUID(),
-    setup,
-    scores,
-    avgScore,
-    riskPerUnit,
-    rewardPerUnit,
-    rMultiple,
-    positionSize,
-    call,
-    rationale,
-    summary,
-    executionPlan: els.executionPlan.value.trim(),
-    notes: els.decisionNotes.value.trim(),
-    createdAt: new Date().toISOString()
-  };
-
-  persist();
-  renderLatestDecision();
-  setView('decision');
-}
-
-function renderLatestDecision() {
-  const d = state.latestDecision;
-  els.riskPerUnit.textContent = d && d.riskPerUnit ? d.riskPerUnit.toFixed(2) : '—';
-  els.rewardPerUnit.textContent = d && d.rewardPerUnit ? d.rewardPerUnit.toFixed(2) : '—';
-  els.rMultiple.textContent = d && d.rMultiple ? d.rMultiple.toFixed(2) : '—';
-  els.positionSize.textContent = d && d.positionSize ? String(d.positionSize) : '—';
-
-  if (!d) {
-    els.decisionOutput.className = 'decision-box empty-state';
-    els.decisionOutput.textContent = 'No decision computed yet.';
-    return;
-  }
-
-  els.decisionOutput.className = 'decision-box';
-  els.decisionOutput.textContent = d.summary;
-}
-
-function saveDecision() {
-  if (!state.latestDecision) {
-    alert('Compute the decision first.');
-    return;
-  }
-  state.latestDecision.executionPlan = els.executionPlan.value.trim();
-  state.latestDecision.notes = els.decisionNotes.value.trim();
-  state.latestDecision.savedAt = new Date().toISOString();
-  state.decisions.unshift(structuredClone(state.latestDecision));
-  persist();
-  renderJournal();
-  setView('journal');
-}
-
-async function copyLatest() {
-  if (!state.latestDecision) {
-    alert('No decision to copy.');
-    return;
-  }
-  const payload = [
-    state.latestDecision.summary,
-    state.latestDecision.executionPlan ? `Execution Plan: ${state.latestDecision.executionPlan}` : '',
-    state.latestDecision.notes ? `Notes: ${state.latestDecision.notes}` : ''
-  ].filter(Boolean).join('\n\n');
-  await navigator.clipboard.writeText(payload);
-  alert('Latest decision copied.');
-}
-
-function renderJournal() {
-  const q = els.journalSearch.value.trim().toLowerCase();
-  const filtered = state.decisions.filter(d => {
-    const blob = `${d.setup.assetName} ${d.setup.decisionType} ${d.call} ${d.rationale} ${d.executionPlan || ''} ${d.notes || ''}`.toLowerCase();
-    return blob.includes(q);
-  });
-
-  if (!filtered.length) {
-    els.journalList.className = 'stack-list empty-state';
-    els.journalList.textContent = 'No matching decisions.';
-    return;
-  }
-
-  els.journalList.className = 'stack-list';
-  els.journalList.innerHTML = '';
-
-  filtered.forEach(d => {
-    const item = document.createElement('div');
-    item.className = 'list-item';
-    const tagClass = d.call === 'ACT' ? 'good' : d.call === 'CAUTION' ? 'caution' : 'bad';
-    item.innerHTML = `
-      <h3>${escapeHtml(d.setup.assetName)}</h3>
-      <div class="meta">${escapeHtml(d.setup.decisionType)} · ${escapeHtml(d.setup.timeframe)} · ${formatDate(d.savedAt || d.createdAt)}</div>
-      <div class="tag-row">
-        <span class="tag ${tagClass}">${escapeHtml(d.call)}</span>
-        <span class="tag">Avg ${d.avgScore.toFixed(1)}</span>
-        ${d.rMultiple ? `<span class="tag">R ${d.rMultiple.toFixed(2)}</span>` : ''}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#dbeafe" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="Trader Decide" />
+  <title>Decide Like a Trader</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <p class="eyebrow">Decision System</p>
+      <h1>Decide Like a Trader</h1>
+      <p class="subtitle">Structure uncertainty. Clarify risk. Make a decision that can actually be executed.</p>
+      <div class="hero-pills">
+        <button class="pill active" data-view="setup">Setup</button>
+        <button class="pill" data-view="score">Score</button>
+        <button class="pill" data-view="decision">Decision</button>
+        <button class="pill" data-view="journal">Journal</button>
       </div>
-      <div class="body-text">${escapeHtml(d.rationale)}</div>
-      ${d.executionPlan ? `<div class="body-text"><strong>Execution:</strong> ${escapeHtml(d.executionPlan)}</div>` : ''}
-      ${d.notes ? `<div class="body-text"><strong>Notes:</strong> ${escapeHtml(d.notes)}</div>` : ''}
-      <div class="item-actions">
-        <button class="secondary" data-action="load" data-id="${d.id}">Load</button>
-        <button class="secondary" data-action="delete" data-id="${d.id}">Delete</button>
-      </div>
-    `;
-    els.journalList.appendChild(item);
-  });
+    </header>
 
-  els.journalList.querySelectorAll('button').forEach(btn => btn.addEventListener('click', handleJournalAction));
-}
+    <main>
+      <section class="panel active" id="view-setup">
+        <div class="card">
+          <h2>Decision Setup</h2>
+          <div class="grid">
+            <label>
+              Situation / Asset
+              <input id="assetName" type="text" placeholder="Ticker, project, deal, opportunity..." />
+            </label>
+            <label>
+              Decision Type
+              <select id="decisionType">
+                <option value="Enter">Enter</option>
+                <option value="Add">Add</option>
+                <option value="Hold">Hold</option>
+                <option value="Reduce">Reduce</option>
+                <option value="Exit">Exit</option>
+                <option value="Pass">Pass</option>
+              </select>
+            </label>
+            <label>
+              Timeframe
+              <select id="timeframe">
+                <option value="Immediate">Immediate</option>
+                <option value="Intraday">Intraday</option>
+                <option value="Swing">Swing</option>
+                <option value="Strategic">Strategic</option>
+              </select>
+            </label>
+            <label>
+              Conviction Goal
+              <select id="convictionGoal">
+                <option value="Low">Low</option>
+                <option value="Moderate">Moderate</option>
+                <option value="High">High</option>
+              </select>
+            </label>
+          </div>
 
-function handleJournalAction(e) {
-  const id = e.currentTarget.dataset.id;
-  const action = e.currentTarget.dataset.action;
-  const decision = state.decisions.find(d => d.id === id);
-  if (!decision) return;
+          <label>
+            Thesis
+            <textarea id="thesis" rows="3" placeholder="What is the core idea? Why does this exist at all?"></textarea>
+          </label>
 
-  if (action === 'load') {
-    loadDecisionIntoForm(decision);
-    state.latestDecision = structuredClone(decision);
-    persist();
-    renderLatestDecision();
-    setView('decision');
-  }
+          <label>
+            Trigger / Catalyst
+            <textarea id="trigger" rows="3" placeholder="What event, setup, condition, or asymmetry is driving the opportunity?"></textarea>
+          </label>
 
-  if (action === 'delete') {
-    if (!confirm('Delete this decision?')) return;
-    state.decisions = state.decisions.filter(d => d.id !== id);
-    persist();
-    renderJournal();
-  }
-}
+          <label>
+            Disconfirming Risk
+            <textarea id="risk" rows="3" placeholder="What would make this wrong fast?"></textarea>
+          </label>
+        </div>
 
-function loadDecisionIntoForm(d) {
-  els.assetName.value = d.setup.assetName || '';
-  els.decisionType.value = d.setup.decisionType || 'Enter';
-  els.timeframe.value = d.setup.timeframe || 'Immediate';
-  els.convictionGoal.value = d.setup.convictionGoal || 'Moderate';
-  els.thesis.value = d.setup.thesis || '';
-  els.trigger.value = d.setup.trigger || '';
-  els.risk.value = d.setup.risk || '';
-  els.entry.value = d.setup.entry || '';
-  els.stop.value = d.setup.stop || '';
-  els.target.value = d.setup.target || '';
-  els.maxRisk.value = d.setup.maxRisk || '';
-  els.scoreClarity.value = d.scores.clarity;
-  els.scoreTrigger.value = d.scores.trigger;
-  els.scoreRisk.value = d.scores.risk;
-  els.scoreExecution.value = d.scores.execution;
-  els.scoreReward.value = d.scores.reward;
-  els.scoreEmotion.value = d.scores.emotion;
-  els.executionPlan.value = d.executionPlan || '';
-  els.decisionNotes.value = d.notes || '';
-  syncRangeValues();
-}
+        <div class="card">
+          <h2>Price / Risk Frame</h2>
+          <div class="grid">
+            <label>
+              Entry / Action Level
+              <input id="entry" type="number" step="0.01" placeholder="0.00" />
+            </label>
+            <label>
+              Stop / Invalidated Level
+              <input id="stop" type="number" step="0.01" placeholder="0.00" />
+            </label>
+            <label>
+              Target / Expected Payoff
+              <input id="target" type="number" step="0.01" placeholder="0.00" />
+            </label>
+            <label>
+              Max Risk ($)
+              <input id="maxRisk" type="number" step="1" placeholder="100" />
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="saveSetupBtn" class="primary">Save Setup</button>
+            <button id="clearSetupBtn" class="secondary">Clear</button>
+          </div>
+        </div>
+      </section>
 
-function restoreInputs() {
-  if (!state.currentSetup) return;
-  els.assetName.value = state.currentSetup.assetName || '';
-  els.decisionType.value = state.currentSetup.decisionType || 'Enter';
-  els.timeframe.value = state.currentSetup.timeframe || 'Immediate';
-  els.convictionGoal.value = state.currentSetup.convictionGoal || 'Moderate';
-  els.thesis.value = state.currentSetup.thesis || '';
-  els.trigger.value = state.currentSetup.trigger || '';
-  els.risk.value = state.currentSetup.risk || '';
-  els.entry.value = state.currentSetup.entry || '';
-  els.stop.value = state.currentSetup.stop || '';
-  els.target.value = state.currentSetup.target || '';
-  els.maxRisk.value = state.currentSetup.maxRisk || '';
-}
+      <section class="panel" id="view-score">
+        <div class="card">
+          <h2>Decision Scoring</h2>
+          <div class="grid">
+            <label>
+              Thesis Clarity
+              <input id="scoreClarity" type="range" min="1" max="5" value="3" />
+              <span class="range-value" id="scoreClarityValue">3</span>
+            </label>
+            <label>
+              Trigger Quality
+              <input id="scoreTrigger" type="range" min="1" max="5" value="3" />
+              <span class="range-value" id="scoreTriggerValue">3</span>
+            </label>
+            <label>
+              Risk Visibility
+              <input id="scoreRisk" type="range" min="1" max="5" value="3" />
+              <span class="range-value" id="scoreRiskValue">3</span>
+            </label>
+            <label>
+              Execution Readiness
+              <input id="scoreExecution" type="range" min="1" max="5" value="3" />
+              <span class="range-value" id="scoreExecutionValue">3</span>
+            </label>
+            <label>
+              Asymmetry / Reward
+              <input id="scoreReward" type="range" min="1" max="5" value="3" />
+              <span class="range-value" id="scoreRewardValue">3</span>
+            </label>
+            <label>
+              Emotional Control
+              <input id="scoreEmotion" type="range" min="1" max="5" value="3" />
+              <span class="range-value" id="scoreEmotionValue">3</span>
+            </label>
+          </div>
+          <div class="button-row">
+            <button id="computeBtn" class="primary">Compute Decision</button>
+          </div>
+        </div>
 
-function exportData() {
-  const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `decide-like-a-trader-export-${new Date().toISOString().slice(0,10)}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
-}
+        <div class="card">
+          <h2>Operator Questions</h2>
+          <div class="prompt-list">
+            <div class="prompt-item">Is this a real edge or just stimulation?</div>
+            <div class="prompt-item">Is the downside defined before action?</div>
+            <div class="prompt-item">Would I still take this if I had to explain it in one sentence?</div>
+            <div class="prompt-item">Is this decision executable right now?</div>
+            <div class="prompt-item">Am I trading the setup or my emotions?</div>
+          </div>
+        </div>
+      </section>
 
-function importData(e) {
-  const file = e.target.files?.[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = (event) => {
-    try {
-      const parsed = JSON.parse(event.target.result);
-      state = {
-        ...structuredClone(defaultState),
-        ...parsed
-      };
-      persist();
-      restoreInputs();
-      renderJournal();
-      renderLatestDecision();
-      alert('Import complete.');
-    } catch {
-      alert('That file could not be imported.');
-    } finally {
-      els.importFile.value = '';
-    }
-  };
-  reader.readAsText(file);
-}
+      <section class="panel" id="view-decision">
+        <div class="stats-grid">
+          <div class="card stat-card">
+            <span class="stat-label">Risk / Share</span>
+            <span id="riskPerUnit" class="stat-value">—</span>
+          </div>
+          <div class="card stat-card">
+            <span class="stat-label">Reward / Share</span>
+            <span id="rewardPerUnit" class="stat-value">—</span>
+          </div>
+          <div class="card stat-card">
+            <span class="stat-label">R Multiple</span>
+            <span id="rMultiple" class="stat-value">—</span>
+          </div>
+          <div class="card stat-card">
+            <span class="stat-label">Size</span>
+            <span id="positionSize" class="stat-value">—</span>
+          </div>
+        </div>
 
-function loadDemoData() {
-  if (state.decisions.length) {
-    if (!confirm('Demo data will be added to your existing data. Continue?')) return;
-  }
+        <div class="card">
+          <h2>Decision Output</h2>
+          <div id="decisionOutput" class="decision-box empty-state">No decision computed yet.</div>
+          <label>
+            Execution Plan
+            <textarea id="executionPlan" rows="3" placeholder="What exactly will you do next?"></textarea>
+          </label>
+          <label>
+            Notes
+            <textarea id="decisionNotes" rows="3" placeholder="What matters about this call?"></textarea>
+          </label>
+          <div class="button-row">
+            <button id="saveDecisionBtn" class="primary">Save Decision</button>
+            <button id="copyDecisionBtn" class="secondary">Copy Latest</button>
+          </div>
+        </div>
+      </section>
 
-  const demo = {
-    id: crypto.randomUUID(),
-    setup: {
-      assetName: 'ABCD',
-      decisionType: 'Enter',
-      timeframe: 'Intraday',
-      convictionGoal: 'Moderate',
-      thesis: 'Catalyst plus strong relative volume may create a momentum window.',
-      trigger: 'Positive press release with clear, specific language.',
-      risk: 'Fails VWAP and loses opening momentum quickly.',
-      entry: 3.20,
-      stop: 2.95,
-      target: 3.95,
-      maxRisk: 150
-    },
-    scores: { clarity: 4, trigger: 4, risk: 4, execution: 4, reward: 4, emotion: 3 },
-    avgScore: 3.83,
-    riskPerUnit: 0.25,
-    rewardPerUnit: 0.75,
-    rMultiple: 3.0,
-    positionSize: 600,
-    call: 'ACT',
-    rationale: 'The setup is sufficiently clear, asymmetric, and executable.',
-    summary: 'Asset: ABCD\nDecision Type: Enter\nTimeframe: Intraday\nCall: ACT\nAverage Score: 3.8 / 5\nRisk / Unit: 0.25\nReward / Unit: 0.75\nR Multiple: 3.00\nSize: 600\n\nRationale: The setup is sufficiently clear, asymmetric, and executable.',
-    executionPlan: 'Enter only if momentum confirms and the level holds.',
-    notes: 'Watch for overextension on the first spike.',
-    createdAt: new Date().toISOString(),
-    savedAt: new Date().toISOString()
-  };
+      <section class="panel" id="view-journal">
+        <div class="card">
+          <div class="card-header">
+            <h2>Decision Journal</h2>
+            <input id="journalSearch" type="search" placeholder="Search decisions..." />
+          </div>
+          <div id="journalList" class="stack-list empty-state">No decisions saved yet.</div>
+        </div>
 
-  state.currentSetup = structuredClone(demo.setup);
-  state.latestDecision = structuredClone(demo);
-  state.decisions.unshift(structuredClone(demo));
-  persist();
-  restoreInputs()
-  renderLatestDecision();
-  renderJournal();
-}
+        <div class="card">
+          <h2>Export / Reset</h2>
+          <div class="button-row">
+            <button id="exportBtn" class="primary">Export JSON</button>
+            <label for="importFile" class="button-like secondary">Import JSON</label>
+            <input id="importFile" type="file" accept=".json" hidden />
+            <button id="demoBtn" class="secondary">Load Demo Data</button>
+            <button id="resetBtn" class="danger">Reset App</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
 
-function resetAll() {
-  if (!confirm('Reset the full app? This cannot be undone.')) return;
-  localStorage.removeItem(STORAGE_KEY);
-  state = structuredClone(defaultState);
-  clearSetup();
-  els.executionPlan.value = '';
-  els.decisionNotes.value = '';
-  els.journalSearch.value = '';
-  renderJournal();
-  renderLatestDecision();
-}
-
-function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return structuredClone(defaultState);
-    return {
-      ...structuredClone(defaultState),
-      ...JSON.parse(raw)
-    };
-  } catch {
-    return structuredClone(defaultState);
-  }
-}
-
-function persist() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-}
-
-function formatDate(iso) {
-  const d = new Date(iso);
-  return d.toLocaleString([], {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false
-  });
-}
-
-function escapeHtml(str='') {
-  return str
-    .replaceAll('&','&amp;')
-    .replaceAll('<','&lt;')
-    .replaceAll('>','&gt;')
-    .replaceAll('"','&quot;')
-    .replaceAll("'",'&#039;');
-}
+  <script src="app.js"></script>
+</body>
+</html>
